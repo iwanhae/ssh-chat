@@ -298,9 +298,9 @@ func (c *Client) inputLoop(reader *bufio.Reader) {
 
 		switch r {
 		case '\r':
-			c.handleEnter(reader)
+			c.handleEnter()
 		case '\n':
-			// ignore bare line feeds; carriage return already handled
+		// ignore bare line feeds; carriage return already handled
 		case 127, '\b':
 			c.handleBackspace()
 		case 3: // Ctrl+C
@@ -319,11 +319,7 @@ func (c *Client) inputLoop(reader *bufio.Reader) {
 	}
 }
 
-func (c *Client) handleEnter(reader *bufio.Reader) {
-	if next, err := reader.Peek(1); err == nil && len(next) == 1 && next[0] == '\n' {
-		_, _ = reader.ReadByte()
-	}
-
+func (c *Client) handleEnter() {
 	c.mu.Lock()
 	text := strings.TrimSpace(string(c.inputBuffer))
 	c.inputBuffer = c.inputBuffer[:0]
