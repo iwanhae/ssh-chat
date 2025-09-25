@@ -34,11 +34,13 @@ func NewChatServer() *ChatServer {
 	cs := &ChatServer{
 		clients: make(map[*Client]struct{}),
 	}
-	cs.messages = append(cs.messages, Message{
+	welcome := Message{
 		Time: time.Now(),
 		Nick: "server",
 		Text: "Welcome to the SSH chat! Use ↑/↓ to scroll and Enter to send messages.",
-	})
+	}
+	cs.messages = append(cs.messages, welcome)
+	cs.logMessage(welcome)
 	return cs
 }
 
@@ -62,6 +64,8 @@ func (cs *ChatServer) AppendMessage(msg Message) {
 		clients = append(clients, c)
 	}
 	cs.mu.Unlock()
+
+	cs.logMessage(msg)
 
 	for _, client := range clients {
 		client.Notify()
@@ -88,6 +92,11 @@ func (cs *ChatServer) ClientCount() int {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	return len(cs.clients)
+}
+
+func (cs *ChatServer) logMessage(msg Message) {
+	sanitized := strings.ReplaceAll(msg.Text, "\n", "\\n")
+	log.Printf("%s [%s] %s", msg.Time.Format(time.RFC3339), msg.Nick, sanitized)
 }
 
 type Client struct {
