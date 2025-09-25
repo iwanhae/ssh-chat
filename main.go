@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,9 +15,10 @@ import (
 )
 
 type Message struct {
-	Time time.Time
-	Nick string
-	Text string
+	Time  time.Time
+	Nick  string
+	Text  string
+	Color int
 }
 
 type ChatServer struct {
@@ -35,9 +37,10 @@ func NewChatServer() *ChatServer {
 		clients: make(map[*Client]struct{}),
 	}
 	welcome := Message{
-		Time: time.Now(),
-		Nick: "server",
-		Text: "Welcome to the SSH chat! Use ↑/↓ to scroll and Enter to send messages.",
+		Time:  time.Now(),
+		Nick:  "server",
+		Text:  "Welcome to the SSH chat! Use ↑/↓ to scroll and Enter to send messages.",
+		Color: 37,
 	}
 	cs.messages = append(cs.messages, welcome)
 	cs.logMessage(welcome)
@@ -74,9 +77,10 @@ func (cs *ChatServer) AppendMessage(msg Message) {
 
 func (cs *ChatServer) AppendSystemMessage(text string) {
 	cs.AppendMessage(Message{
-		Time: time.Now(),
-		Nick: "server",
-		Text: text,
+		Time:  time.Now(),
+		Nick:  "server",
+		Text:  text,
+		Color: 37,
 	})
 }
 
@@ -114,6 +118,11 @@ type Client struct {
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 	nickname  string
+	color     int
+}
+
+var colors = []int{
+	31, 32, 33, 34, 35, 36,
 }
 
 func NewClient(server *ChatServer, session ssh.Session, nickname string, width, height int) *Client {
@@ -131,6 +140,7 @@ func NewClient(server *ChatServer, session ssh.Session, nickname string, width, 
 		updateCh:    make(chan struct{}, 16),
 		done:        make(chan struct{}),
 		nickname:    nickname,
+		color:       colors[rand.Intn(len(colors))],
 		inputBuffer: make([]rune, 0, 128),
 	}
 }
@@ -332,9 +342,10 @@ func (c *Client) handleEnter() {
 	}
 
 	c.server.AppendMessage(Message{
-		Time: time.Now(),
-		Nick: c.nickname,
-		Text: text,
+		Time:  time.Now(),
+		Nick:  c.nickname,
+		Text:  text,
+		Color: c.color,
 	})
 }
 
@@ -394,8 +405,13 @@ func formatMessages(messages []Message, width int) []string {
 	}
 	lines := make([]string, 0, len(messages))
 	for _, msg := range messages {
-		prefix := fmt.Sprintf("[%s] %s: ", msg.Time.Format("15:04:05"), msg.Nick)
-		indent := strings.Repeat(" ", len(prefix))
+		color := msg.Color
+		if color == 0 {
+			color = 37 // default to white
+		}
+		coloredNick := fmt.Sprintf("\x1b[%dm%s\x1b[0m", color, msg.Nick)
+		prefix := fmt.Sprintf("[%s] %s: ", msg.Time.Format("15:04:05"), coloredNick)
+		indent := strings.Repeat(" ", len(msg.Nick)+13)
 		segments := strings.Split(msg.Text, "\n")
 		for i, segment := range segments {
 			base := segment
