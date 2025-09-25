@@ -451,73 +451,6 @@ func tailString(s string, width int) string {
 	return string(runes[len(runes)-width:])
 }
 
-func promptNickname(s ssh.Session, reader *bufio.Reader) (string, error) {
-	buf := make([]rune, 0, 32)
-	for {
-		if _, err := fmt.Fprintf(s, "\x1b[2K\rEnter nickname: %s", string(buf)); err != nil {
-			return "", err
-		}
-
-		r, _, err := reader.ReadRune()
-		if err != nil {
-			return "", err
-		}
-
-		switch r {
-		case '\r', '\n':
-			if r == '\r' {
-				if next, err := reader.Peek(1); err == nil && len(next) == 1 && next[0] == '\n' {
-					_, _ = reader.ReadByte()
-				}
-			}
-			trimmed := strings.TrimSpace(string(buf))
-			if _, err := fmt.Fprint(s, "\r\n"); err != nil {
-				return "", err
-			}
-			if trimmed != "" {
-				return trimmed, nil
-			}
-			if _, err := fmt.Fprint(s, "Nickname cannot be empty. Try again.\r\n"); err != nil {
-				return "", err
-			}
-			buf = buf[:0]
-		case 127, '\b':
-			if len(buf) > 0 {
-				buf = buf[:len(buf)-1]
-			}
-		case 3, 4:
-			return "", fmt.Errorf("nickname input cancelled")
-		case '\x1b':
-			if err := discardEscape(reader); err != nil {
-				return "", err
-			}
-		default:
-			if !isControlRune(r) {
-				buf = append(buf, r)
-			}
-		}
-	}
-}
-
-func discardEscape(reader *bufio.Reader) error {
-	b1, err := reader.ReadByte()
-	if err != nil {
-		return err
-	}
-	if b1 != '[' {
-		return nil
-	}
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return err
-		}
-		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
-			return nil
-		}
-	}
-}
-
 func generateGuestNickname() string {
 	id := atomic.AddUint64(&guestCounter, 1)
 	return fmt.Sprintf("guest-%d", id)
@@ -533,10 +466,7 @@ func main() {
 		}
 
 		reader := bufio.NewReader(s)
-		nickname, err := promptNickname(s, reader)
-		if err != nil {
-			return
-		}
+		nickname := strings.TrimSpace(s.User())
 		if nickname == "" {
 			nickname = generateGuestNickname()
 		}
