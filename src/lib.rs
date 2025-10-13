@@ -4,7 +4,7 @@ pub mod config;
 pub mod ssh;
 pub mod tui;
 
-pub use abuse::{AutoBahn, GeoIpFilter, RateLimiter, ThreatListManager};
+pub use abuse::{AutoBahn, BanManager, GeoIpFilter, RateLimiter, ThreatListManager};
 pub use chat::{ChatMessage, ChatServer, MessageEvent, NoticeMessage, SystemLog};
 pub use config::Config;
 pub use ssh::SshServer;

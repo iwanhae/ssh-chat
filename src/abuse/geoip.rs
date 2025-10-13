@@ -1,5 +1,5 @@
 use crate::config::{GeoIpConfig, GeoIpMode};
-use maxminddb::{geoip2, MaxMindDBError, Reader};
+use maxminddb::{MaxMindDbError, Reader, geoip2};
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ pub struct GeoIpFilter {
 }
 
 impl GeoIpFilter {
-    pub fn new(config: GeoIpConfig) -> Result<Self, MaxMindDBError> {
+    pub fn new(config: GeoIpConfig) -> Result<Self, MaxMindDbError> {
         let reader = if config.enabled {
             let reader = Reader::open_readfile(&config.database_path)?;
             Some(Arc::new(reader))
@@ -29,7 +29,8 @@ impl GeoIpFilter {
 
         let country: geoip2::Country = reader
             .lookup(ip)
-            .map_err(|e| format!("GeoIP lookup failed: {}", e))?;
+            .map_err(|e| format!("GeoIP lookup failed: {}", e))?
+            .ok_or("No country data found for IP")?;
 
         let iso_code = country
             .country
@@ -38,12 +39,20 @@ impl GeoIpFilter {
 
         match self.config.mode {
             GeoIpMode::Blacklist => {
-                if self.config.blocked_countries.contains(&iso_code.to_string()) {
+                if self
+                    .config
+                    .blocked_countries
+                    .contains(&iso_code.to_string())
+                {
                     return Err(self.config.rejection_message.clone());
                 }
             }
             GeoIpMode::Whitelist => {
-                if !self.config.allowed_countries.contains(&iso_code.to_string()) {
+                if !self
+                    .config
+                    .allowed_countries
+                    .contains(&iso_code.to_string())
+                {
                     return Err(self.config.rejection_message.clone());
                 }
             }

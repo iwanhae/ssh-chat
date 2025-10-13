@@ -4,4 +4,4 @@ pub mod server;
 pub use message::{
     AdminAction, ChatMessage, Color, LogLevel, MessageEvent, NoticeKind, NoticeMessage, SystemLog,
 };
-pub use server::{ChatServer, Client, Stats};
+pub use server::{BanDuration, ChatServer, Client, Stats};

@@ -39,11 +39,7 @@ impl RateLimiter {
 
     pub fn register_client(&self, client_id: Uuid, ip: IpAddr) -> Result<(), String> {
         // Check connection limit per IP
-        let connection_count = self
-            .ip_connections
-            .entry(ip)
-            .or_default()
-            .len();
+        let connection_count = self.ip_connections.entry(ip).or_default().len();
 
         if connection_count >= self.flood_config.max_connections_per_ip {
             return Err(format!(
@@ -53,15 +49,11 @@ impl RateLimiter {
         }
 
         // Add client to IP tracking
-        self.ip_connections
-            .entry(ip)
-            .or_default()
-            .push(client_id);
+        self.ip_connections.entry(ip).or_default().push(client_id);
 
         // Create rate limiter for this client
         let quota = Quota::per_second(
-            NonZeroU32::new(self.rate_config.messages_per_second as u32)
-                .unwrap_or(nonzero!(1u32)),
+            NonZeroU32::new(self.rate_config.messages_per_second as u32).unwrap_or(nonzero!(1u32)),
         )
         .allow_burst(
             NonZeroU32::new(self.rate_config.burst_capacity as u32).unwrap_or(nonzero!(1u32)),
@@ -150,9 +142,7 @@ impl RateLimiter {
         // Cleanup message history for inactive clients
         self.message_history.retain(|_, history| {
             if let Some(&last_message) = history.back() {
-                now.duration_since(last_message)
-                    .unwrap_or(Duration::ZERO)
-                    < inactive_threshold
+                now.duration_since(last_message).unwrap_or(Duration::ZERO) < inactive_threshold
             } else {
                 false
             }

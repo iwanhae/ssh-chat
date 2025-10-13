@@ -1,4 +1,4 @@
-use ssh_chat::{ChatServer, Config, SshServer, TuiConsole};
+use ssh_chat::{BanManager, ChatServer, Config, SshServer, TuiConsole};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -10,8 +10,15 @@ async fn main() -> anyhow::Result<()> {
     // Create system log channel
     let (system_tx, system_rx) = mpsc::unbounded_channel();
 
+    // Initialize BanManager
+    let ban_manager = Arc::new(BanManager::new(config.bans.ban_list_path.clone())?);
+
     // Initialize ChatServer
-    let chat_server = Arc::new(ChatServer::new(config.clone(), system_tx.clone()));
+    let chat_server = Arc::new(ChatServer::new(
+        config.clone(),
+        system_tx.clone(),
+        ban_manager,
+    ));
 
     // Initialize SSH Server
     let ssh_server = Arc::new(SshServer::new(config.clone(), chat_server.clone()));

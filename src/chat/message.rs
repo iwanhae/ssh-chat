@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
+use rand::prelude::IndexedRandom;
 
 /// Message events that can be broadcast
 #[derive(Debug, Clone)]
@@ -84,7 +85,6 @@ impl Color {
     }
 
     pub fn random() -> Self {
-        use rand::seq::SliceRandom;
         *[
             Color::Red,
             Color::Green,
@@ -93,7 +93,7 @@ impl Color {
             Color::Magenta,
             Color::Cyan,
         ]
-        .choose(&mut rand::thread_rng())
+        .choose(&mut rand::rng())
         .unwrap()
     }
 }

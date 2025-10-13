@@ -117,9 +117,9 @@ impl AutoBahn {
 
     async fn require_challenge(&self, ip: IpAddr, violation_count: u8) -> Result<(), String> {
         // Generate simple math challenge
-        let mut rng = rand::thread_rng();
-        let a = rng.gen_range(10..100);
-        let b = rng.gen_range(10..100);
+        let mut rng = rand::rng();
+        let a = rng.random_range(10..100);
+        let b = rng.random_range(10..100);
         let _expected_answer = a + b;
 
         println!(
@@ -129,10 +129,7 @@ impl AutoBahn {
 
         // In real implementation, this would send the challenge to the client
         // and wait for response. For now, we simulate a timeout.
-        tokio::time::sleep(Duration::from_secs(
-            self.config.challenge_timeout_seconds,
-        ))
-        .await;
+        tokio::time::sleep(Duration::from_secs(self.config.challenge_timeout_seconds)).await;
 
         // Simulate challenge failure
         Err(format!(

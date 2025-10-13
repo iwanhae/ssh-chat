@@ -1,11 +1,12 @@
-use crate::chat::{ChatServer, MessageEvent};
+use crate::chat::{ChatServer, LogLevel, MessageEvent};
 use crate::config::Config;
 use parking_lot::Mutex;
 use russh::server::{Auth, Handler, Msg, Session};
 use russh::{Channel, ChannelId};
-use russh_keys::key;
+use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -25,7 +26,7 @@ impl SshServer {
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         let ssh_config = Arc::new(russh::server::Config {
             auth_rejection_time: std::time::Duration::from_secs(1),
-            keys: vec![key::KeyPair::generate_ed25519().unwrap()],
+            keys: vec![russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519).unwrap()],
             ..Default::default()
         });
 
@@ -35,8 +36,32 @@ impl SshServer {
         println!("SSH Server listening on {}", bind_addr);
 
         loop {
-            let (stream, peer_addr) = listener.accept().await?;
-            let handler = SshHandler::new(self.chat_server.clone(), Some(peer_addr.ip()));
+            let (mut stream, peer_addr) = listener.accept().await?;
+            let peer_ip = peer_addr.ip();
+
+            // Check if IP is banned
+            if let Some(ban_entry) = self.chat_server.ban_manager().check_ban(peer_ip) {
+                // Log ban rejection to TUI
+                let reason = if let Some(expires_at) = ban_entry.expires_at {
+                    format!("Banned until {:?}: {}", expires_at, ban_entry.reason)
+                } else {
+                    format!("Permanently banned: {}", ban_entry.reason)
+                };
+
+                self.chat_server.log_system(
+                    LogLevel::Warning,
+                    format!("Rejected banned IP {}: {}", peer_ip, reason),
+                    Some(peer_ip),
+                );
+
+                // Send rejection message and close connection
+                let ban_msg = format!("Connection rejected: {}\r\n", reason);
+                let _ = stream.write_all(ban_msg.as_bytes()).await;
+                let _ = stream.shutdown().await;
+                continue;
+            }
+
+            let handler = SshHandler::new(self.chat_server.clone(), Some(peer_ip));
             let config = ssh_config.clone();
 
             tokio::spawn(async move {
@@ -123,17 +148,34 @@ impl SshHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl Handler for SshHandler {
     type Error = anyhow::Error;
 
     async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
+        // Check ban status before auth
+        if let Some(ip) = self.ip
+            && self.chat_server.ban_manager().is_banned(ip) {
+                return Ok(Auth::Reject {
+                    partial_success: false,
+                    proceed_with_methods: None,
+                });
+            }
+
         // Use SSH username as nickname
         self.nickname = Some(user.to_string());
         Ok(Auth::Accept)
     }
 
     async fn auth_password(&mut self, user: &str, _password: &str) -> Result<Auth, Self::Error> {
+        // Check ban status before auth
+        if let Some(ip) = self.ip
+            && self.chat_server.ban_manager().is_banned(ip) {
+                return Ok(Auth::Reject {
+                    partial_success: false,
+                    proceed_with_methods: None,
+                });
+            }
+
         // Accept any password, use username as nickname
         self.nickname = Some(user.to_string());
         Ok(Auth::Accept)
@@ -142,8 +184,17 @@ impl Handler for SshHandler {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        _public_key: &key::PublicKey,
+        _public_key: &russh::keys::PublicKey,
     ) -> Result<Auth, Self::Error> {
+        // Check ban status before auth
+        if let Some(ip) = self.ip
+            && self.chat_server.ban_manager().is_banned(ip) {
+                return Ok(Auth::Reject {
+                    partial_success: false,
+                    proceed_with_methods: None,
+                });
+            }
+
         // Accept any public key, use username as nickname
         self.nickname = Some(user.to_string());
         Ok(Auth::Accept)
@@ -172,6 +223,14 @@ impl Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         // Register client with ChatServer
         if let (Some(nickname), Some(ip)) = (self.nickname.as_ref(), self.ip) {
+            // Double-check ban status
+            if self.chat_server.ban_manager().is_banned(ip) {
+                let ban_msg = "\r\nYou have been banned from this server.\r\n";
+                self.send_to_client(channel, ban_msg).await?;
+                session.close(channel);
+                return Ok(());
+            }
+
             match self.chat_server.add_client(nickname.clone(), ip) {
                 Ok((client_id, _client)) => {
                     self.client_id = Some(client_id);
