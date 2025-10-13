@@ -1,8 +1,14 @@
+pub mod abuse;
 pub mod chat;
 pub mod config;
+pub mod ssh;
+pub mod tui;
 
-pub use chat::{ChatMessage, MessageEvent, NoticeMessage, SystemLog};
+pub use abuse::{AutoBahn, GeoIpFilter, RateLimiter, ThreatListManager};
+pub use chat::{ChatMessage, ChatServer, MessageEvent, NoticeMessage, SystemLog};
 pub use config::Config;
+pub use ssh::SshServer;
+pub use tui::TuiConsole;
 
 /// Validation errors for messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

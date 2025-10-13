@@ -13,6 +13,7 @@ reqwest = { version = "0.12", features = ["json"] }
 # SSH server
 russh = "0.45"
 russh-keys = "0.45"
+async-trait = "0.1"
 
 # Rate limiting
 governor = "0.7"

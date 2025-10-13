@@ -1,34 +1,41 @@
-use ssh_chat::Config;
+use ssh_chat::{ChatServer, Config, SshServer, TuiConsole};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load configuration
-    let config = Config::from_file("config.toml")?;
+    let config = Arc::new(Config::from_file("config.toml")?);
 
-    println!("SSH Chat Server v1.0");
-    println!("Listening on {}:{}", config.server.host, config.server.port);
-    println!("Max clients: {}", config.server.max_clients);
-    println!(
-        "AutoBahn: {}",
-        if config.autobahn.enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-    println!(
-        "GeoIP: {}",
-        if config.geoip.enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
+    // Create system log channel
+    let (system_tx, system_rx) = mpsc::unbounded_channel();
 
-    // TODO: Initialize ChatServer
-    // TODO: Spawn SSH server task
-    // TODO: Spawn TUI console task
-    // TODO: Spawn cleanup task
+    // Initialize ChatServer
+    let chat_server = Arc::new(ChatServer::new(config.clone(), system_tx.clone()));
+
+    // Initialize SSH Server
+    let ssh_server = Arc::new(SshServer::new(config.clone(), chat_server.clone()));
+
+    // Initialize TUI Console
+    let mut tui_console = TuiConsole::new(config.tui.clone(), chat_server.clone(), system_rx);
+
+    // Spawn SSH server task
+    let ssh_server_task = {
+        let ssh_server = ssh_server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ssh_server.run().await {
+                eprintln!("SSH Server error: {}", e);
+            }
+        })
+    };
+
+    // Run TUI console (blocks until user quits)
+    if let Err(e) = tui_console.run().await {
+        eprintln!("TUI Console error: {}", e);
+    }
+
+    // Cleanup: abort SSH server task
+    ssh_server_task.abort();
 
     Ok(())
 }

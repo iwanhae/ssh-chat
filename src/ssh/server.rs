@@ -1,0 +1,290 @@
+use crate::chat::{ChatServer, MessageEvent};
+use crate::config::Config;
+use parking_lot::Mutex;
+use russh::server::{Auth, Handler, Msg, Session};
+use russh::{Channel, ChannelId};
+use russh_keys::key;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use uuid::Uuid;
+
+pub struct SshServer {
+    config: Arc<Config>,
+    chat_server: Arc<ChatServer>,
+}
+
+impl SshServer {
+    pub fn new(config: Arc<Config>, chat_server: Arc<ChatServer>) -> Self {
+        Self {
+            config,
+            chat_server,
+        }
+    }
+
+    pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        let ssh_config = Arc::new(russh::server::Config {
+            auth_rejection_time: std::time::Duration::from_secs(1),
+            keys: vec![key::KeyPair::generate_ed25519().unwrap()],
+            ..Default::default()
+        });
+
+        let bind_addr = format!("{}:{}", self.config.server.host, self.config.server.port);
+        let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+
+        println!("SSH Server listening on {}", bind_addr);
+
+        loop {
+            let (stream, peer_addr) = listener.accept().await?;
+            let handler = SshHandler::new(self.chat_server.clone(), Some(peer_addr.ip()));
+            let config = ssh_config.clone();
+
+            tokio::spawn(async move {
+                let session = russh::server::run_stream(config, stream, handler).await;
+                if let Err(e) = session {
+                    eprintln!("Session error: {}", e);
+                }
+            });
+        }
+    }
+}
+
+pub struct SshHandler {
+    chat_server: Arc<ChatServer>,
+    client_id: Option<Uuid>,
+    nickname: Option<String>,
+    ip: Option<std::net::IpAddr>,
+    input_buffer: Arc<Mutex<String>>,
+    channels: Arc<Mutex<HashMap<ChannelId, Arc<Channel<Msg>>>>>,
+}
+
+impl SshHandler {
+    fn new(chat_server: Arc<ChatServer>, ip: Option<std::net::IpAddr>) -> Self {
+        Self {
+            chat_server,
+            client_id: None,
+            nickname: None,
+            ip,
+            input_buffer: Arc::new(Mutex::new(String::new())),
+            channels: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    async fn send_to_client(&self, channel_id: ChannelId, msg: &str) -> Result<(), russh::Error> {
+        // Clone Arc<Channel> to avoid holding lock across await
+        let channel = {
+            let channels = self.channels.lock();
+            channels.get(&channel_id).cloned()
+        };
+
+        if let Some(channel) = channel {
+            channel.data(msg.as_bytes()).await?;
+        }
+        Ok(())
+    }
+
+    fn spawn_message_listener(
+        channels: Arc<Mutex<HashMap<ChannelId, Arc<Channel<Msg>>>>>,
+        channel_id: ChannelId,
+        mut rx: broadcast::Receiver<MessageEvent>,
+    ) {
+        tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                // Format message for SSH client
+                let formatted = match event {
+                    MessageEvent::Chat(msg) => {
+                        let color_code = msg.color.to_ansi();
+                        format!(
+                            "\r\n\x1b[{}m[{}]\x1b[0m {}\r\n",
+                            color_code, msg.nickname, msg.text
+                        )
+                    }
+                    MessageEvent::Notice(notice) => {
+                        let action = match notice.kind {
+                            crate::chat::NoticeKind::Joined => "joined",
+                            crate::chat::NoticeKind::Left => "left",
+                        };
+                        format!("\r\n\x1b[90m* {} {}\x1b[0m\r\n", notice.nickname, action)
+                    }
+                    MessageEvent::System(_) => continue, // SKIP system messages
+                };
+
+                // Clone Arc<Channel> to avoid holding lock across await
+                let channel = {
+                    let channels = channels.lock();
+                    channels.get(&channel_id).cloned()
+                };
+
+                if let Some(channel) = channel {
+                    let _ = channel.data(formatted.as_bytes()).await;
+                }
+            }
+        });
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler for SshHandler {
+    type Error = anyhow::Error;
+
+    async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
+        // Use SSH username as nickname
+        self.nickname = Some(user.to_string());
+        Ok(Auth::Accept)
+    }
+
+    async fn auth_password(&mut self, user: &str, _password: &str) -> Result<Auth, Self::Error> {
+        // Accept any password, use username as nickname
+        self.nickname = Some(user.to_string());
+        Ok(Auth::Accept)
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        _public_key: &key::PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        // Accept any public key, use username as nickname
+        self.nickname = Some(user.to_string());
+        Ok(Auth::Accept)
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        let channel_id = channel.id();
+        self.channels.lock().insert(channel_id, Arc::new(channel));
+        Ok(true)
+    }
+
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        // Register client with ChatServer
+        if let (Some(nickname), Some(ip)) = (self.nickname.as_ref(), self.ip) {
+            match self.chat_server.add_client(nickname.clone(), ip) {
+                Ok((client_id, _client)) => {
+                    self.client_id = Some(client_id);
+
+                    // Send welcome message
+                    let welcome = format!(
+                        "\r\n\x1b[1;32mWelcome to SSH Chat, {}!\x1b[0m\r\n",
+                        nickname
+                    );
+                    self.send_to_client(channel, &welcome).await?;
+
+                    // Subscribe to chat messages
+                    let rx = self.chat_server.subscribe_chat();
+                    let channels = self.channels.clone();
+                    Self::spawn_message_listener(channels, channel, rx);
+                }
+                Err(e) => {
+                    let error_msg = format!("\r\nError: {}\r\n", e);
+                    self.send_to_client(channel, &error_msg).await?;
+                    session.close(channel);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(client_id) = self.client_id {
+            let s = String::from_utf8_lossy(data);
+
+            for c in s.chars() {
+                match c {
+                    '\r' | '\n' => {
+                        // Process input line
+                        let line = {
+                            let mut buffer = self.input_buffer.lock();
+                            let line = buffer.trim().to_string();
+                            buffer.clear();
+                            line
+                        };
+
+                        if !line.is_empty() {
+                            // Broadcast message
+                            if let Err(e) = self.chat_server.broadcast_chat(client_id, line) {
+                                let error_msg = format!("\r\nError: {}\r\n", e);
+                                self.send_to_client(channel, &error_msg).await?;
+                            }
+                        }
+
+                        // Echo newline
+                        self.send_to_client(channel, "\r\n").await?;
+                    }
+                    '\x03' => {
+                        // Ctrl+C - disconnect
+                        session.close(channel);
+                        return Ok(());
+                    }
+                    '\x7f' | '\x08' => {
+                        // Backspace
+                        {
+                            let mut buffer = self.input_buffer.lock();
+                            if !buffer.is_empty() {
+                                buffer.pop();
+                            }
+                        }
+                        // Echo backspace sequence
+                        self.send_to_client(channel, "\x08 \x08").await?;
+                    }
+                    c if c.is_ascii() && !c.is_control() => {
+                        // Regular character
+                        {
+                            let mut buffer = self.input_buffer.lock();
+                            buffer.push(c);
+                        }
+                        // Echo character
+                        self.send_to_client(channel, &c.to_string()).await?;
+                    }
+                    _ => {
+                        // Ignore other control characters
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn channel_close(
+        &mut self,
+        channel: ChannelId,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(client_id) = self.client_id {
+            self.chat_server.remove_client(client_id);
+        }
+        self.channels.lock().remove(&channel);
+        Ok(())
+    }
+
+    async fn channel_eof(
+        &mut self,
+        _channel: ChannelId,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(client_id) = self.client_id {
+            self.chat_server.remove_client(client_id);
+        }
+        Ok(())
+    }
+}
