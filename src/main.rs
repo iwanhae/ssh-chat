@@ -1,4 +1,6 @@
-use ssh_chat::{BanManager, ChatServer, Config, GeoIpFilter, SshServer, ThreatListManager, TuiConsole};
+use ssh_chat::{
+    BanManager, ChatServer, Config, GeoIpFilter, SshServer, ThreatListManager, TuiConsole,
+};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 

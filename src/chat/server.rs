@@ -478,7 +478,7 @@ mod tests {
         let config = Arc::new(Config::from_file("config.toml").unwrap());
         let (system_tx, system_rx) = mpsc::unbounded_channel();
         let ban_manager = Arc::new(BanManager::new(PathBuf::from("/tmp/test_bans.json")).unwrap());
-        
+
         // Create disabled GeoIpFilter for tests (no database required)
         let geoip_config = crate::config::GeoIpConfig {
             enabled: false,
@@ -489,7 +489,7 @@ mod tests {
             rejection_message: "Blocked".to_string(),
         };
         let geoip_filter = Arc::new(GeoIpFilter::new(geoip_config).unwrap());
-        
+
         // Create disabled ThreatListManager for tests
         let threat_config = crate::config::ThreatListsConfig {
             enabled: false,
@@ -499,8 +499,14 @@ mod tests {
             sources: vec![],
         };
         let threat_list_manager = Arc::new(ThreatListManager::new(threat_config));
-        
-        let server = ChatServer::new(config, system_tx, ban_manager, geoip_filter, threat_list_manager);
+
+        let server = ChatServer::new(
+            config,
+            system_tx,
+            ban_manager,
+            geoip_filter,
+            threat_list_manager,
+        );
         (server, system_rx)
     }
 
@@ -596,5 +602,135 @@ mod tests {
 
         // Verify ban is active
         assert!(server.ban_manager().is_banned(ip));
+    }
+
+    #[test]
+    fn test_nickname_length_rejection() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        // Create nickname longer than max_length (20 chars)
+        let long_nickname = "a".repeat(21);
+
+        let result = server.add_client(long_nickname, ip);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Nickname too long"));
+    }
+
+    #[test]
+    fn test_nickname_length_truncation() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        // Create nickname between truncate_length (10) and max_length (20)
+        let nickname = "a".repeat(15);
+
+        let result = server.add_client(nickname, ip);
+        assert!(result.is_ok());
+
+        let (_, client) = result.unwrap();
+        // Should be truncated to 10 characters
+        assert_eq!(client.nickname.len(), 10);
+        assert_eq!(client.nickname, "a".repeat(10));
+    }
+
+    #[test]
+    fn test_message_length_rejection() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let (client_id, _) = server.add_client("testuser".to_string(), ip).unwrap();
+
+        // Create message longer than max_length (500 chars)
+        let long_message = "a".repeat(501);
+
+        let result = server.broadcast_chat(client_id, long_message);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Message too long"));
+    }
+
+    #[test]
+    fn test_message_length_truncation() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let (client_id, _) = server.add_client("testuser".to_string(), ip).unwrap();
+
+        let mut chat_rx = server.subscribe_chat();
+
+        // Create message between truncate_length (300) and max_length (500)
+        let message = "a".repeat(350);
+
+        let result = server.broadcast_chat(client_id, message);
+        assert!(result.is_ok());
+
+        // Check that message was truncated with indicator
+        let msg = chat_rx.try_recv().unwrap();
+        match msg {
+            MessageEvent::Chat(chat) => {
+                // Should be truncated to 300 + "... [truncated]"
+                assert_eq!(chat.text.len(), 300 + "... [truncated]".len());
+                assert!(chat.text.ends_with("... [truncated]"));
+            }
+            _ => panic!("Expected Chat message"),
+        }
+    }
+
+    #[test]
+    fn test_anti_abuse_components_initialized() {
+        let (server, _rx) = create_test_server();
+
+        // Verify all anti-abuse components are accessible
+        assert!(
+            !server
+                .ban_manager()
+                .is_banned(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
+        );
+        assert!(!server.geoip_filter().is_enabled());
+        assert!(!server.threat_list_manager().is_enabled());
+    }
+
+    #[test]
+    fn test_temporary_ban_duration() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+
+        // Add client
+        let (_, _) = server.add_client("testuser".to_string(), ip).unwrap();
+
+        // Apply temporary ban
+        let result = server.ban_client(
+            &ip.to_string(),
+            BanDuration::Minutes(5),
+            Some("test temp ban".to_string()),
+        );
+        assert!(result.is_ok());
+
+        // Verify ban is active
+        assert!(server.ban_manager().is_banned(ip));
+
+        // Client should be kicked
+        assert_eq!(server.client_count(), 0);
+    }
+
+    #[test]
+    fn test_unban_workflow() {
+        let (server, _rx) = create_test_server();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+
+        // Add and ban client
+        let (_, _) = server.add_client("testuser".to_string(), ip).unwrap();
+        server
+            .ban_client(
+                &ip.to_string(),
+                BanDuration::Permanent,
+                Some("test ban".to_string()),
+            )
+            .unwrap();
+
+        assert!(server.ban_manager().is_banned(ip));
+
+        // Unban
+        let result = server.unban_client(&ip.to_string());
+        assert!(result.is_ok());
+        assert!(!server.ban_manager().is_banned(ip));
     }
 }
