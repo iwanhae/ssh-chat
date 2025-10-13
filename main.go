@@ -592,5 +592,5 @@ func main() {
 	})
 
 	log.Println("starting ssh chat server on port 2222...")
-	log.Fatal(ssh.ListenAndServe(":2221", nil, ssh.HostKeyFile("host.key")))
+	log.Fatal(ssh.ListenAndServe(":2222", nil, ssh.HostKeyFile("host.key")))
 }
