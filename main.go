@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ type Message struct {
 	Nick  string
 	Text  string
 	Color int
+	IP    string
 }
 
 type ChatServer struct {
@@ -33,6 +35,31 @@ var (
 	globalChat   = NewChatServer()
 	guestCounter uint64
 )
+
+// BanManager keeps a set of banned IP addresses.
+type BanManager struct {
+	mu     sync.RWMutex
+	banned map[string]struct{}
+}
+
+func NewBanManager() *BanManager {
+	return &BanManager{banned: make(map[string]struct{})}
+}
+
+func (b *BanManager) IsBanned(ip string) bool {
+	b.mu.RLock()
+	_, ok := b.banned[ip]
+	b.mu.RUnlock()
+	return ok
+}
+
+func (b *BanManager) Ban(ip string) {
+	b.mu.Lock()
+	b.banned[ip] = struct{}{}
+	b.mu.Unlock()
+}
+
+var banManager = NewBanManager()
 
 func NewChatServer() *ChatServer {
 	cs := &ChatServer{
@@ -86,6 +113,24 @@ func (cs *ChatServer) AppendSystemMessage(text string) {
 	})
 }
 
+// DisconnectByIP closes all clients currently connected from the given IP.
+func (cs *ChatServer) DisconnectByIP(ip string) int {
+	cs.mu.RLock()
+	clients := make([]*Client, 0, len(cs.clients))
+	for c := range cs.clients {
+		if c.ip == ip {
+			clients = append(clients, c)
+		}
+	}
+	cs.mu.RUnlock()
+	for _, c := range clients {
+		// Best-effort notify and close
+		_ = c.session.Exit(1)
+		c.Close()
+	}
+	return len(clients)
+}
+
 func (cs *ChatServer) Messages() []Message {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -102,6 +147,13 @@ func (cs *ChatServer) ClientCount() int {
 
 func (cs *ChatServer) logMessage(msg Message) {
 	sanitized := strings.ReplaceAll(msg.Text, "\n", "\\n")
+	if len(sanitized) > 10 {
+		sanitized = sanitized[:10]
+	}
+	if msg.IP != "" {
+		log.Printf("%s [%s@%s] %s", msg.Time.Format(time.RFC3339), msg.Nick, msg.IP, sanitized)
+		return
+	}
 	log.Printf("%s [%s] %s", msg.Time.Format(time.RFC3339), msg.Nick, sanitized)
 }
 
@@ -121,13 +173,14 @@ type Client struct {
 	wg        sync.WaitGroup
 	nickname  string
 	color     int
+	ip        string
 }
 
 var colors = []int{
 	31, 32, 33, 34, 35, 36,
 }
 
-func NewClient(server *ChatServer, session ssh.Session, nickname string, width, height int) *Client {
+func NewClient(server *ChatServer, session ssh.Session, nickname string, width, height int, ip string) *Client {
 	if width <= 0 {
 		width = 80
 	}
@@ -144,6 +197,7 @@ func NewClient(server *ChatServer, session ssh.Session, nickname string, width, 
 		nickname:    nickname,
 		color:       colors[rand.Intn(len(colors))],
 		inputBuffer: make([]rune, 0, 128),
+		ip:          ip,
 	}
 }
 
@@ -369,11 +423,26 @@ func (c *Client) handleEnter() {
 		return
 	}
 
+	// Commands
+	if strings.HasPrefix(text, "/ban ") {
+		target := strings.TrimSpace(strings.TrimPrefix(text, "/ban "))
+		// Allow just IP (IPv4/IPv6). No CIDR support for simplicity.
+		if ip := net.ParseIP(target); ip == nil {
+			c.server.AppendSystemMessage("Invalid IP address")
+			return
+		}
+		banManager.Ban(target)
+		disconnected := c.server.DisconnectByIP(target)
+		c.server.AppendSystemMessage(fmt.Sprintf("IP %s banned. Disconnected %d session(s).", target, disconnected))
+		return
+	}
+
 	c.server.AppendMessage(Message{
 		Time:  time.Now(),
 		Nick:  c.nickname,
 		Text:  text,
 		Color: c.color,
+		IP:    c.ip,
 	})
 
 	if strings.Contains(text, "스프링") {
@@ -574,6 +643,18 @@ func main() {
 		}
 
 		reader := bufio.NewReader(s)
+		// Determine client IP (strip port)
+		remote := s.RemoteAddr().String()
+		ip := remote
+		if host, _, err := net.SplitHostPort(remote); err == nil {
+			ip = host
+		}
+
+		if banManager.IsBanned(ip) {
+			fmt.Fprintln(s, "Your IP is banned.")
+			s.Exit(1)
+			return
+		}
 		nickname := strings.TrimSpace(s.User())
 		if nickname == "" {
 			nickname = generateGuestNickname()
@@ -583,7 +664,7 @@ func main() {
 			nickname = nickname[:10]
 		}
 
-		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height))
+		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height), ip)
 		globalChat.AddClient(client)
 
 		defer func() {
