@@ -347,6 +347,18 @@ func (c *Client) handleEnter() {
 		Text:  text,
 		Color: c.color,
 	})
+
+	if strings.Contains(text, "스프링") {
+		c.server.AppendSystemMessage("물러가라 이 사악한 스프링놈아.")
+	}
+
+	if strings.Contains(text, "exit") {
+		c.server.AppendSystemMessage("exit 안되요. 그냥 ctrl + c 하시죠")
+	}
+
+	if strings.Contains(text, "help") {
+		c.server.AppendSystemMessage("help? 인생은 실전이에요.")
+	}
 }
 
 func (c *Client) handleBackspace() {
