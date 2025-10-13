@@ -1,7 +1,7 @@
+use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
-use rand::prelude::IndexedRandom;
 
 /// Message events that can be broadcast
 #[derive(Debug, Clone)]

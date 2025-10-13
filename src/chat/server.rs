@@ -333,9 +333,10 @@ impl ChatServer {
     fn resolve_target(&self, target: &str) -> Result<Client, String> {
         // Try UUID first
         if let Ok(uuid) = Uuid::parse_str(target)
-            && let Some(client) = self.get_client(uuid) {
-                return Ok(client);
-            }
+            && let Some(client) = self.get_client(uuid)
+        {
+            return Ok(client);
+        }
 
         // Try IP address
         if let Ok(ip) = target.parse::<IpAddr>() {

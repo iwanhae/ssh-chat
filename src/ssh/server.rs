@@ -1,9 +1,9 @@
 use crate::chat::{ChatServer, LogLevel, MessageEvent};
 use crate::config::Config;
 use parking_lot::Mutex;
+use rand_core::OsRng;
 use russh::server::{Auth, Handler, Msg, Session};
 use russh::{Channel, ChannelId};
-use rand_core::OsRng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -26,7 +26,10 @@ impl SshServer {
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         let ssh_config = Arc::new(russh::server::Config {
             auth_rejection_time: std::time::Duration::from_secs(1),
-            keys: vec![russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519).unwrap()],
+            keys: vec![
+                russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519)
+                    .unwrap(),
+            ],
             ..Default::default()
         });
 
@@ -154,12 +157,13 @@ impl Handler for SshHandler {
     async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
         // Check ban status before auth
         if let Some(ip) = self.ip
-            && self.chat_server.ban_manager().is_banned(ip) {
-                return Ok(Auth::Reject {
-                    partial_success: false,
-                    proceed_with_methods: None,
-                });
-            }
+            && self.chat_server.ban_manager().is_banned(ip)
+        {
+            return Ok(Auth::Reject {
+                partial_success: false,
+                proceed_with_methods: None,
+            });
+        }
 
         // Use SSH username as nickname
         self.nickname = Some(user.to_string());
@@ -169,12 +173,13 @@ impl Handler for SshHandler {
     async fn auth_password(&mut self, user: &str, _password: &str) -> Result<Auth, Self::Error> {
         // Check ban status before auth
         if let Some(ip) = self.ip
-            && self.chat_server.ban_manager().is_banned(ip) {
-                return Ok(Auth::Reject {
-                    partial_success: false,
-                    proceed_with_methods: None,
-                });
-            }
+            && self.chat_server.ban_manager().is_banned(ip)
+        {
+            return Ok(Auth::Reject {
+                partial_success: false,
+                proceed_with_methods: None,
+            });
+        }
 
         // Accept any password, use username as nickname
         self.nickname = Some(user.to_string());
@@ -188,12 +193,13 @@ impl Handler for SshHandler {
     ) -> Result<Auth, Self::Error> {
         // Check ban status before auth
         if let Some(ip) = self.ip
-            && self.chat_server.ban_manager().is_banned(ip) {
-                return Ok(Auth::Reject {
-                    partial_success: false,
-                    proceed_with_methods: None,
-                });
-            }
+            && self.chat_server.ban_manager().is_banned(ip)
+        {
+            return Ok(Auth::Reject {
+                partial_success: false,
+                proceed_with_methods: None,
+            });
+        }
 
         // Accept any public key, use username as nickname
         self.nickname = Some(user.to_string());
@@ -227,7 +233,7 @@ impl Handler for SshHandler {
             if self.chat_server.ban_manager().is_banned(ip) {
                 let ban_msg = "\r\nYou have been banned from this server.\r\n";
                 self.send_to_client(channel, ban_msg).await?;
-                session.close(channel);
+                let _ = session.close(channel);
                 return Ok(());
             }
 
@@ -250,7 +256,7 @@ impl Handler for SshHandler {
                 Err(e) => {
                     let error_msg = format!("\r\nError: {}\r\n", e);
                     self.send_to_client(channel, &error_msg).await?;
-                    session.close(channel);
+                    let _ = session.close(channel);
                 }
             }
         }
@@ -291,7 +297,7 @@ impl Handler for SshHandler {
                     }
                     '\x03' => {
                         // Ctrl+C - disconnect
-                        session.close(channel);
+                        let _ = session.close(channel);
                         return Ok(());
                     }
                     '\x7f' | '\x08' => {

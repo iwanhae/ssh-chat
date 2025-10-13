@@ -92,9 +92,10 @@ impl TuiConsole {
 
             // Clear expired status messages (5 seconds timeout)
             if let Some((_, timestamp, _)) = &self.status_message
-                && timestamp.elapsed() > Duration::from_secs(5) {
-                    self.status_message = None;
-                }
+                && timestamp.elapsed() > Duration::from_secs(5)
+            {
+                self.status_message = None;
+            }
 
             // Check for new logs
             while let Ok(log) = self.log_rx.try_recv() {
