@@ -23,13 +23,38 @@ impl SshServer {
         }
     }
 
+    /// Load host key from file, or generate and save if it doesn't exist
+    fn load_or_generate_host_key(
+        path: &std::path::Path,
+    ) -> anyhow::Result<russh::keys::PrivateKey> {
+        if path.exists() {
+            // Load existing key
+            russh::keys::PrivateKey::read_openssh_file(path).map_err(|e| {
+                anyhow::anyhow!("Failed to load host key from {}: {}", path.display(), e)
+            })
+        } else {
+            // Generate new key
+            let key = russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519)
+                .map_err(|e| anyhow::anyhow!("Failed to generate host key: {}", e))?;
+
+            // Save for future use
+            key.write_openssh_file(path, Default::default())
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to save host key to {}: {}", path.display(), e)
+                })?;
+
+            println!("Generated new host key: {}", path.display());
+            Ok(key)
+        }
+    }
+
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        // Load or generate host key
+        let host_key = Self::load_or_generate_host_key(&self.config.server.host_key_path)?;
+
         let ssh_config = Arc::new(russh::server::Config {
             auth_rejection_time: std::time::Duration::from_secs(1),
-            keys: vec![
-                russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519)
-                    .unwrap(),
-            ],
+            keys: vec![host_key],
             ..Default::default()
         });
 
@@ -60,6 +85,36 @@ impl SshServer {
                 // Send rejection message and close connection
                 let ban_msg = format!("Connection rejected: {}\r\n", reason);
                 let _ = stream.write_all(ban_msg.as_bytes()).await;
+                let _ = stream.shutdown().await;
+                continue;
+            }
+
+            // Check GeoIP restrictions
+            if let Err(e) = self.chat_server.geoip_filter().check_ip(peer_ip) {
+                self.chat_server.log_system(
+                    LogLevel::Warning,
+                    format!("Rejected IP {} due to GeoIP filter: {}", peer_ip, e),
+                    Some(peer_ip),
+                );
+
+                // Send rejection message and close connection
+                let geoip_msg = format!("Connection rejected: {}\r\n", e);
+                let _ = stream.write_all(geoip_msg.as_bytes()).await;
+                let _ = stream.shutdown().await;
+                continue;
+            }
+
+            // Check threat list
+            if let Err(e) = self.chat_server.threat_list_manager().check_ip(peer_ip) {
+                self.chat_server.log_system(
+                    LogLevel::Warning,
+                    format!("Rejected IP {} due to threat list: {}", peer_ip, e),
+                    Some(peer_ip),
+                );
+
+                // Send rejection message and close connection
+                let threat_msg = format!("Connection rejected: {}\r\n", e);
+                let _ = stream.write_all(threat_msg.as_bytes()).await;
                 let _ = stream.shutdown().await;
                 continue;
             }
@@ -143,8 +198,13 @@ impl SshHandler {
                     channels.get(&channel_id).cloned()
                 };
 
-                if let Some(channel) = channel {
-                    let _ = channel.data(formatted.as_bytes()).await;
+                match channel {
+                    Some(ch) => {
+                        if ch.data(formatted.as_bytes()).await.is_err() {
+                            break; // Channel error - client disconnected
+                        }
+                    }
+                    None => break, // Channel removed - client disconnected
                 }
             }
         });

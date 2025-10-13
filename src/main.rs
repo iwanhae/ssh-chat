@@ -1,4 +1,4 @@
-use ssh_chat::{BanManager, ChatServer, Config, SshServer, TuiConsole};
+use ssh_chat::{BanManager, ChatServer, Config, GeoIpFilter, SshServer, ThreatListManager, TuiConsole};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -13,11 +13,20 @@ async fn main() -> anyhow::Result<()> {
     // Initialize BanManager
     let ban_manager = Arc::new(BanManager::new(config.bans.ban_list_path.clone())?);
 
+    // Initialize GeoIpFilter
+    let geoip_filter = Arc::new(GeoIpFilter::new(config.geoip.clone())?);
+
+    // Initialize ThreatListManager with auto-update
+    let threat_list_manager = Arc::new(ThreatListManager::new(config.threat_lists.clone()));
+    threat_list_manager.clone().start_auto_update().await;
+
     // Initialize ChatServer
     let chat_server = Arc::new(ChatServer::new(
         config.clone(),
         system_tx.clone(),
         ban_manager,
+        geoip_filter,
+        threat_list_manager,
     ));
 
     // Initialize SSH Server

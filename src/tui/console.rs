@@ -85,7 +85,8 @@ impl TuiConsole {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> anyhow::Result<()> {
-        let tick_rate = Duration::from_millis(1000 / self.config.refresh_rate_fps as u64);
+        let tick_rate =
+            Duration::from_millis(1000 / std::cmp::max(self.config.refresh_rate_fps, 1) as u64);
 
         loop {
             terminal.draw(|f| self.ui(f))?;

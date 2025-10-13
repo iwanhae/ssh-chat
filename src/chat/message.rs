@@ -1,4 +1,4 @@
-use rand::prelude::IndexedRandom;
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};

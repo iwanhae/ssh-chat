@@ -53,6 +53,10 @@ impl ThreatListManager {
                     let mut ip_list = self.ip_list.write();
                     let mut cidr_list = self.cidr_list.write();
 
+                    // Clear existing entries to prevent unbounded growth
+                    ip_list.clear();
+                    cidr_list.clear();
+
                     for ip in ips {
                         ip_list.insert(ip);
                     }

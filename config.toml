@@ -50,7 +50,7 @@ connection_delay_max_ms = 60000
 # GeoIP filtering
 [geoip]
 enabled = true
-database_path = "GeoLite2-Country.mmdb"  # Download from MaxMind
+database_path = "./GeoIP2-City.mmdb"  # Download from MaxMind (or use GeoLite2-City.mmdb)
 mode = "blacklist"  # "blacklist" or "whitelist"
 # ISO country codes (2-letter)
 blocked_countries = ["CN", "RU", "KP"]  # Example: China, Russia, North Korea

@@ -1,4 +1,4 @@
-use crate::abuse::BanManager;
+use crate::abuse::{BanManager, GeoIpFilter, ThreatListManager};
 use crate::chat::message::{
     AdminAction, ChatMessage, Color, LogLevel, MessageEvent, NoticeKind, NoticeMessage, SystemLog,
 };
@@ -56,6 +56,8 @@ pub struct ChatServer {
     clients: Arc<DashMap<Uuid, Client>>,
     stats: Arc<RwLock<Stats>>,
     ban_manager: Arc<BanManager>,
+    geoip_filter: Arc<GeoIpFilter>,
+    threat_list_manager: Arc<ThreatListManager>,
 
     // Message channels
     chat_tx: broadcast::Sender<MessageEvent>,
@@ -68,6 +70,8 @@ impl ChatServer {
         config: Arc<Config>,
         system_tx: mpsc::UnboundedSender<SystemLog>,
         ban_manager: Arc<BanManager>,
+        geoip_filter: Arc<GeoIpFilter>,
+        threat_list_manager: Arc<ThreatListManager>,
     ) -> Self {
         let (chat_tx, _) = broadcast::channel(1000);
 
@@ -76,6 +80,8 @@ impl ChatServer {
             clients: Arc::new(DashMap::new()),
             stats: Arc::new(RwLock::new(Stats::default())),
             ban_manager,
+            geoip_filter,
+            threat_list_manager,
             chat_tx,
             system_tx,
         }
@@ -87,6 +93,23 @@ impl ChatServer {
         if self.clients.len() >= self.config.server.max_clients {
             return Err("Server full".to_string());
         }
+
+        // Validate nickname length
+        let nickname = if nickname.chars().count() > self.config.limits.nickname_max_length {
+            return Err(format!(
+                "Nickname too long (max {} characters)",
+                self.config.limits.nickname_max_length
+            ));
+        } else if nickname.chars().count() > self.config.limits.nickname_truncate_length {
+            // Truncate with warning
+            let truncated: String = nickname
+                .chars()
+                .take(self.config.limits.nickname_truncate_length)
+                .collect();
+            truncated
+        } else {
+            nickname
+        };
 
         // Check if nickname is taken
         if self.clients.iter().any(|c| c.nickname == nickname) {
@@ -154,8 +177,23 @@ impl ChatServer {
     }
 
     /// Broadcast chat message (to all SSH clients)
-    pub fn broadcast_chat(&self, client_id: Uuid, text: String) -> Result<(), String> {
+    pub fn broadcast_chat(&self, client_id: Uuid, mut text: String) -> Result<(), String> {
         let client = self.clients.get(&client_id).ok_or("Client not found")?;
+
+        // Validate message length
+        if text.chars().count() > self.config.limits.message_max_length {
+            return Err(format!(
+                "Message too long (max {} characters)",
+                self.config.limits.message_max_length
+            ));
+        } else if text.chars().count() > self.config.limits.message_truncate_length {
+            // Truncate with indication
+            text = text
+                .chars()
+                .take(self.config.limits.message_truncate_length)
+                .collect();
+            text.push_str("... [truncated]");
+        }
 
         let message = ChatMessage {
             timestamp: SystemTime::now(),
@@ -418,6 +456,16 @@ impl ChatServer {
     pub fn ban_manager(&self) -> &Arc<BanManager> {
         &self.ban_manager
     }
+
+    /// Get GeoIpFilter reference
+    pub fn geoip_filter(&self) -> &Arc<GeoIpFilter> {
+        &self.geoip_filter
+    }
+
+    /// Get ThreatListManager reference
+    pub fn threat_list_manager(&self) -> &Arc<ThreatListManager> {
+        &self.threat_list_manager
+    }
 }
 
 #[cfg(test)]
@@ -430,7 +478,29 @@ mod tests {
         let config = Arc::new(Config::from_file("config.toml").unwrap());
         let (system_tx, system_rx) = mpsc::unbounded_channel();
         let ban_manager = Arc::new(BanManager::new(PathBuf::from("/tmp/test_bans.json")).unwrap());
-        let server = ChatServer::new(config, system_tx, ban_manager);
+        
+        // Create disabled GeoIpFilter for tests (no database required)
+        let geoip_config = crate::config::GeoIpConfig {
+            enabled: false,
+            database_path: PathBuf::from("nonexistent.mmdb"),
+            mode: crate::config::GeoIpMode::Blacklist,
+            blocked_countries: vec![],
+            allowed_countries: vec![],
+            rejection_message: "Blocked".to_string(),
+        };
+        let geoip_filter = Arc::new(GeoIpFilter::new(geoip_config).unwrap());
+        
+        // Create disabled ThreatListManager for tests
+        let threat_config = crate::config::ThreatListsConfig {
+            enabled: false,
+            update_interval_hours: 24,
+            cache_dir: PathBuf::from("/tmp/threat_cache"),
+            action: crate::config::ThreatAction::Block,
+            sources: vec![],
+        };
+        let threat_list_manager = Arc::new(ThreatListManager::new(threat_config));
+        
+        let server = ChatServer::new(config, system_tx, ban_manager, geoip_filter, threat_list_manager);
         (server, system_rx)
     }
 
