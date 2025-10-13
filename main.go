@@ -573,6 +573,10 @@ func main() {
 			nickname = generateGuestNickname()
 		}
 
+		if len(nickname) > 10 {
+			nickname = nickname[:10]
+		}
+
 		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height))
 		globalChat.AddClient(client)
 
