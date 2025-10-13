@@ -1,0 +1,126 @@
+[server]
+host = "0.0.0.0"
+port = 2222
+host_key_path = "host.key"
+max_clients = 1000
+
+[limits]
+# Message length (double-tier)
+message_truncate_length = 300
+message_max_length = 500
+
+# Nickname length
+nickname_truncate_length = 10
+nickname_max_length = 20
+
+# History
+max_message_history = 1000
+
+[rate_limit]
+messages_per_second = 2.0
+burst_capacity = 5
+
+[flood]
+window_seconds = 10
+max_messages_in_window = 10
+max_connections_per_ip = 3
+
+[bans]
+auto_ban_after_violations = 3
+temp_ban_duration_minutes = 5
+permanent_ban_threshold = 10
+ban_list_path = "bans.json"
+
+# AutoBahn-style progressive enforcement
+[autobahn]
+enabled = true
+# Progressive delays on violations (milliseconds)
+delay_on_first_violation = 100
+delay_on_second_violation = 500
+delay_on_third_violation = 2000
+delay_on_fourth_violation = 5000
+# Math challenge after N violations
+challenge_after_violations = 2
+challenge_timeout_seconds = 10
+# Exponential backoff on repeated connections
+connection_delay_base_ms = 100
+connection_delay_multiplier = 2.0
+connection_delay_max_ms = 60000
+
+# GeoIP filtering
+[geoip]
+enabled = true
+database_path = "GeoLite2-Country.mmdb"  # Download from MaxMind
+mode = "blacklist"  # "blacklist" or "whitelist"
+# ISO country codes (2-letter)
+blocked_countries = ["CN", "RU", "KP"]  # Example: China, Russia, North Korea
+allowed_countries = []  # Empty = allow all (when mode = "whitelist")
+# Reject message
+rejection_message = "Connection from your country is not allowed"
+
+# Threat IP lists (malicious IPs, VPNs, proxies, Tor)
+[threat_lists]
+enabled = true
+# Auto-update interval (hours)
+update_interval_hours = 24
+# Cache directory for downloaded lists
+cache_dir = "threat_cache"
+# Action: "block" or "log_only"
+action = "block"
+
+# Spamhaus DROP/EDROP (highly reputable, free)
+[[threat_lists.sources]]
+name = "Spamhaus DROP"
+url = "https://www.spamhaus.org/drop/drop.txt"
+format = "cidr"  # CIDR format
+enabled = true
+
+[[threat_lists.sources]]
+name = "Spamhaus EDROP"
+url = "https://www.spamhaus.org/drop/edrop.txt"
+format = "cidr"
+enabled = true
+
+# Tor exit nodes
+[[threat_lists.sources]]
+name = "Tor Exit Nodes"
+url = "https://check.torproject.org/torbulkexitlist"
+format = "ip"  # Plain IP addresses
+enabled = true
+
+# Emerging Threats
+[[threat_lists.sources]]
+name = "Emerging Threats"
+url = "https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt"
+format = "ip"
+enabled = true
+
+# CI Army bad IPs
+[[threat_lists.sources]]
+name = "CI Army"
+url = "https://cinsscore.com/list/ci-badguys.txt"
+format = "ip"
+enabled = false  # Optional
+
+# Blocklist.de (SSH attackers)
+[[threat_lists.sources]]
+name = "Blocklist.de SSH"
+url = "https://lists.blocklist.de/lists/ssh.txt"
+format = "ip"
+enabled = true
+
+# Optional: AbuseIPDB (requires API key)
+[[threat_lists.sources]]
+name = "AbuseIPDB"
+url = "https://api.abuseipdb.com/api/v2/blacklist"
+format = "json"
+enabled = false
+# Add your API key in headers
+headers = { "Key" = "YOUR_API_KEY_HERE", "Accept" = "application/json" }
+# Query params
+params = { "confidenceMinimum" = "90" }
+
+[tui]
+refresh_rate_fps = 30
+max_log_lines = 5000
+show_ip_addresses = true

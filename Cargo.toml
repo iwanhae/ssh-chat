@@ -1,0 +1,56 @@
+[package]
+name = "ssh-chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client for threat list downloads
+reqwest = { version = "0.12", features = ["json"] }
+
+# SSH server
+russh = "0.45"
+russh-keys = "0.45"
+
+# Rate limiting
+governor = "0.7"
+nonzero_ext = "0.3"
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Concurrent collections
+dashmap = "6"
+parking_lot = "0.12"
+
+# Text processing
+unicode-segmentation = "1.11"
+
+# GeoIP
+maxminddb = "0.24"
+
+# IP network parsing (CIDR)
+ipnetwork = "0.20"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Random
+rand = "0.8"
+
+[profile.release]
+lto = true
+opt-level = 3
+strip = true
