@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/gliderlabs/ssh"
 )
@@ -363,6 +365,10 @@ func (c *Client) handleEnter() {
 		return
 	}
 
+	if err := ValidateNoCombining(text); err != nil {
+		return
+	}
+
 	c.server.AppendMessage(Message{
 		Time:  time.Now(),
 		Nick:  c.nickname,
@@ -597,4 +603,40 @@ func main() {
 
 	log.Println("starting ssh chat server on port 2222...")
 	log.Fatal(ssh.ListenAndServe(":2222", nil, ssh.HostKeyFile("host.key")))
+}
+
+// 범위 기반(명시적 블록) 체크를 추가로 하고 싶다면 아래도 사용
+func isCombiningBlock(r rune) bool {
+	switch {
+	case r >= 0x0300 && r <= 0x036F: // Combining Diacritical Marks
+		return true
+	case r >= 0x1AB0 && r <= 0x1AFF: // Combining Diacritical Marks Extended
+		return true
+	case r >= 0x1DC0 && r <= 0x1DFF: // Combining Diacritical Marks Supplement
+		return true
+	case r >= 0x20D0 && r <= 0x20FF: // Combining Diacritical Marks for Symbols
+		return true
+	case r >= 0xFE20 && r <= 0xFE2F: // Combining Half Marks
+		return true
+	default:
+		return false
+	}
+}
+
+func isBlockedRune(r rune) bool {
+	// 범주 기반(Mn/Me) + 범위 기반을 모두 허용
+	if unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) {
+		return true
+	}
+	return isCombiningBlock(r)
+}
+
+func ValidateNoCombining(input string) error {
+	// 혹시 모를 누락을 대비해 룬 단위로 다시 점검(보수적)
+	for _, r := range input {
+		if isBlockedRune(r) {
+			return errors.New("input contains combining diacritical marks (blocked)")
+		}
+	}
+	return nil
 }
