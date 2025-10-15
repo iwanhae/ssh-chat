@@ -698,8 +698,8 @@ func main() {
 		if nickname == "" {
 			nickname = generateGuestNickname()
 		}
-		if len(nickname) > 20 {
-			nickname = nickname[:20]
+		if len([]rune(nickname)) > 10 {
+			nickname = string([]rune(nickname)[:10])
 		}
 
 		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height), ip)
