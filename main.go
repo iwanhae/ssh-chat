@@ -185,10 +185,10 @@ var colors = []int{
 }
 
 func NewClient(server *ChatServer, session ssh.Session, nickname string, width, height int, ip string) *Client {
-	if width <= 0 {
+	if width <= 0 || width > 8192 {
 		width = 80
 	}
-	if height <= 0 {
+	if height <= 0 || height > 8192 {
 		height = 24
 	}
 	return &Client{
@@ -245,10 +245,10 @@ func (c *Client) Notify() {
 
 func (c *Client) SetWindowSize(width, height int) {
 	c.mu.Lock()
-	if width > 0 {
+	if width > 0 && width <= 8192 {
 		c.width = width
 	}
-	if height > 0 {
+	if height > 0 && height <= 8192 {
 		c.height = height
 	}
 	c.mu.Unlock()
