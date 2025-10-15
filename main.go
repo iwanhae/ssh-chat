@@ -449,6 +449,7 @@ func (c *Client) handleEnter() {
 		banManager.Ban(c.ip)
 		msg := fmt.Sprintf("야 `%s` 나가.", c.nickname)
 		c.server.AppendSystemMessage(msg)
+		c.session.Exit(1)
 		c.Close()
 		return
 	}
