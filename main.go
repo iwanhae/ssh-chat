@@ -482,6 +482,18 @@ func (c *Client) handleEnter() {
 	if strings.Contains(text, "스프링") {
 		c.server.AppendSystemMessage("물러가라 이 사악한 스프링놈아.")
 	}
+	if strings.Contains(text, "자바") {
+		c.server.AppendSystemMessage("망해라 자바")
+	}
+	if strings.Contains(text, "러스트") {
+		c.server.AppendSystemMessage("Go: Kubernetes, fzf, Tailscale, Typescript-go, ... / Rust: nil")
+	}
+	if strings.Contains(text, "파이썬") {
+		c.server.AppendSystemMessage("자기 스스로도 컴파일 못하는 허접한 언어.")
+	}
+	if strings.Contains(text, "고랭") {
+		c.server.AppendSystemMessage("돈 못벌쥬? 마이너쥬? ")
+	}
 
 	if strings.Contains(text, "exit") {
 		c.server.AppendSystemMessage("exit 안되요. 그냥 ctrl + c 하시죠")
