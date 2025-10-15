@@ -38,6 +38,7 @@ type ChatServer struct {
 var (
 	globalChat   = NewChatServer()
 	guestCounter uint64
+	rateLimiter  = NewConnectionRateLimiter()
 )
 
 // BanManager keeps a set of banned IP addresses.
@@ -64,6 +65,44 @@ func (b *BanManager) Ban(ip string) {
 }
 
 var banManager = NewBanManager()
+
+// ConnectionRateLimiter tracks connection attempts per IP.
+type ConnectionRateLimiter struct {
+	mu      sync.Mutex
+	entries map[string][]time.Time
+}
+
+func NewConnectionRateLimiter() *ConnectionRateLimiter {
+	return &ConnectionRateLimiter{
+		entries: make(map[string][]time.Time),
+	}
+}
+
+// CheckAndRecord returns true if the connection should be allowed, false otherwise.
+func (rl *ConnectionRateLimiter) CheckAndRecord(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	oneMinuteAgo := now.Add(-1 * time.Minute)
+
+	timestamps := rl.entries[ip]
+
+	newTimestamps := make([]time.Time, 0, len(timestamps))
+	for _, ts := range timestamps {
+		if ts.After(oneMinuteAgo) {
+			newTimestamps = append(newTimestamps, ts)
+		}
+	}
+
+	if len(newTimestamps) >= 5 {
+		return false
+	}
+
+	newTimestamps = append(newTimestamps, now)
+	rl.entries[ip] = newTimestamps
+	return true
+}
 
 func NewChatServer() *ChatServer {
 	cs := &ChatServer{
@@ -727,6 +766,16 @@ func main() {
 
 		if banManager.IsBanned(ip) {
 			fmt.Fprintln(s, "Your IP is banned.")
+			_ = s.Exit(1)
+			return
+		}
+
+		if !rateLimiter.CheckAndRecord(ip) {
+			log.Printf("Banning IP %s for too many connections.", ip)
+			banManager.Ban(ip)
+			disconnected := globalChat.DisconnectByIP(ip)
+			log.Printf("Disconnected %d existing session(s) from %s.", disconnected, ip)
+			fmt.Fprintln(s, "Your IP is banned for creating too many connections.")
 			_ = s.Exit(1)
 			return
 		}
