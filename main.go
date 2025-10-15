@@ -539,20 +539,32 @@ func (c *Client) handleEnter() {
 		IP:    c.ip,
 	})
 
+	if strings.Contains(text, "rm -") {
+		c.server.AppendSystemMessage("이거 리눅스아니에요. 윈도 파워쉘요.")
+	}
+	if strings.Contains(text, "rd ") {
+		c.server.AppendSystemMessage("이거 윈도 아니에요. 리눅스요.")
+	}
 	if strings.Contains(text, "스프링") {
 		c.server.AppendSystemMessage("물러가라 이 사악한 스프링놈아.")
 	}
 	if strings.Contains(text, "자바") {
 		c.server.AppendSystemMessage("망해라 자바")
 	}
-	if strings.Contains(text, "러스트") {
+	if strings.Contains(text, "자스") || strings.Contains(text, "자바스") || strings.Contains(text, "javascript") {
+		c.server.AppendSystemMessage("https://jsisweird.com/")
+	}
+	if strings.Contains(text, "러스트") || strings.Contains(text, "rust") {
 		c.server.AppendSystemMessage("Go: Kubernetes, fzf, Tailscale, Typescript-go, ... / Rust: nil")
 	}
-	if strings.Contains(text, "파이썬") {
+	if strings.Contains(text, "파이썬") || strings.Contains(text, "python") {
 		c.server.AppendSystemMessage("자기 스스로도 컴파일 못하는 허접한 언어.")
 	}
 	if strings.Contains(text, "고랭") {
-		c.server.AppendSystemMessage("돈 못벌쥬? 마이너쥬? ")
+		c.server.AppendSystemMessage("돈 못벌쥬? 마이너쥬?")
+	}
+	if strings.Contains(text, "쿠버네티스") {
+		c.server.AppendSystemMessage("이 방 방장 밥줄이에요. 나쁜말하면 영구 밴")
 	}
 
 	if strings.Contains(text, "exit") {
