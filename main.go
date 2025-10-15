@@ -444,10 +444,11 @@ func (c *Client) handleEnter() {
 	messageCount := len(c.messageTimestamps)
 	c.mu.Unlock()
 
-	if messageCount > 60 {
-		msg := fmt.Sprintf("Kicking %s for spamming (too many messages per minute).", c.nickname)
-		c.server.AppendSystemMessage(msg)
+	if messageCount > 30 {
 		log.Printf("Kicking client %s (%s) for spamming.", c.nickname, c.ip)
+		banManager.Ban(c.ip)
+		msg := fmt.Sprintf("야 `%s` 나가.", c.nickname)
+		c.server.AppendSystemMessage(msg)
 		c.Close()
 		return
 	}
