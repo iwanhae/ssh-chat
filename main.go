@@ -8,9 +8,12 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -665,16 +668,20 @@ func generateGuestNickname() string {
 }
 
 func main() {
-	ssh.Handle(func(s ssh.Session) {
+	quitCh := make(chan os.Signal, 1)
+	signal.Notify(quitCh, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+	// ssh.Handler 그대로 사용
+	h := func(s ssh.Session) {
 		ptyReq, winCh, isPty := s.Pty()
 		if !isPty {
 			fmt.Fprintln(s, "Error: PTY required. Reconnect with -t option.")
-			s.Exit(1)
+			_ = s.Exit(1)
 			return
 		}
 
 		reader := bufio.NewReader(s)
-		// Determine client IP (strip port)
+
 		remote := s.RemoteAddr().String()
 		ip := remote
 		if host, _, err := net.SplitHostPort(remote); err == nil {
@@ -683,21 +690,20 @@ func main() {
 
 		if banManager.IsBanned(ip) {
 			fmt.Fprintln(s, "Your IP is banned.")
-			s.Exit(1)
+			_ = s.Exit(1)
 			return
 		}
+
 		nickname := strings.TrimSpace(s.User())
 		if nickname == "" {
 			nickname = generateGuestNickname()
 		}
-
 		if len(nickname) > 20 {
 			nickname = nickname[:20]
 		}
 
 		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height), ip)
 		globalChat.AddClient(client)
-
 		defer func() {
 			globalChat.RemoveClient(client)
 			client.Close()
@@ -708,13 +714,51 @@ func main() {
 		globalChat.AppendSystemMessage(fmt.Sprintf("%s joined the chat", nickname))
 
 		go client.MonitorWindow(winCh)
-
 		client.Start(reader, s.Context())
 		client.Wait()
-	})
+	}
 
-	log.Println("starting ssh chat server on port 2222...")
-	log.Fatal(ssh.ListenAndServe(":2222", nil, ssh.HostKeyFile("host.key")))
+	// 서버를 객체로 만들어서 Close 할 수 있게
+	srv := &ssh.Server{
+		Addr:    ":2222",
+		Handler: h,
+	}
+	srv.SetOption(ssh.HostKeyFile("host.key"))
+
+	// 서버 실행은 고루틴에서; log.Fatal 쓰지 마세요
+	go func() {
+		log.Println("starting ssh chat server on port 2222...")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, net.ErrClosed) {
+			// 여기서 종료하지 않음
+			log.Printf("ssh server error: %v", err)
+			quitCh <- os.Interrupt
+		}
+	}()
+
+	// 메인 고루틴은 신호 대기 → 카운트다운 → 서버 종료
+	<-quitCh
+
+	globalChat.AppendSystemMessage("서버 폭파 5초전")
+	for i := 5; i >= 0; i-- {
+		time.Sleep(time.Second)
+		globalChat.AppendSystemMessage(fmt.Sprintf("%d 초", i))
+	}
+	globalChat.AppendSystemMessage("💥💥💥💥💥")
+	globalChat.AppendSystemMessage("아마 관리자가 부지런하면 금방 복구할꺼에요.")
+	globalChat.AppendSystemMessage("💥💥💥💥💥")
+	time.Sleep(time.Second)
+	globalChat.AppendSystemMessage("뭐야 왜 안터져")
+	time.Sleep(time.Second)
+	globalChat.AppendSystemMessage("???")
+	time.Sleep(time.Second)
+	globalChat.AppendSystemMessage("???????")
+	time.Sleep(time.Second)
+	globalChat.AppendSystemMessage("????????????")
+	time.Sleep(500 * time.Millisecond)
+
+	// 새 연결 막고 종료
+	_ = srv.Close()
+	os.Exit(0)
 }
 
 // 범위 기반(명시적 블록) 체크를 추가로 하고 싶다면 아래도 사용
