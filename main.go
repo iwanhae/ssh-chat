@@ -147,8 +147,8 @@ func (cs *ChatServer) ClientCount() int {
 
 func (cs *ChatServer) logMessage(msg Message) {
 	sanitized := strings.ReplaceAll(msg.Text, "\n", "\\n")
-	if len(sanitized) > 10 {
-		sanitized = sanitized[:10]
+	if len(sanitized) > 20 {
+		sanitized = sanitized[:20]
 	}
 	if msg.IP != "" {
 		log.Printf("%s [%s@%s] %s", msg.Time.Format(time.RFC3339), msg.Nick, msg.IP, sanitized)
@@ -161,11 +161,12 @@ type Client struct {
 	session ssh.Session
 	server  *ChatServer
 
-	mu           sync.Mutex
-	width        int
-	height       int
-	scrollOffset int
-	inputBuffer  []rune
+	mu                sync.Mutex
+	width             int
+	height            int
+	scrollOffset      int
+	inputBuffer       []rune
+	messageTimestamps []time.Time
 
 	updateCh  chan struct{}
 	done      chan struct{}
@@ -188,16 +189,17 @@ func NewClient(server *ChatServer, session ssh.Session, nickname string, width, 
 		height = 24
 	}
 	return &Client{
-		session:     session,
-		server:      server,
-		width:       width,
-		height:      height,
-		updateCh:    make(chan struct{}, 16),
-		done:        make(chan struct{}),
-		nickname:    nickname,
-		color:       colors[rand.Intn(len(colors))],
-		inputBuffer: make([]rune, 0, 128),
-		ip:          ip,
+		session:           session,
+		server:            server,
+		width:             width,
+		height:            height,
+		updateCh:          make(chan struct{}, 16),
+		done:              make(chan struct{}),
+		nickname:          nickname,
+		color:             colors[rand.Intn(len(colors))],
+		inputBuffer:       make([]rune, 0, 128),
+		messageTimestamps: make([]time.Time, 0),
+		ip:                ip,
 	}
 }
 
@@ -420,6 +422,33 @@ func (c *Client) handleEnter() {
 	}
 
 	if err := ValidateNoCombining(text); err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	now := time.Now()
+	oneMinuteAgo := now.Add(-time.Minute)
+
+	// Filter timestamps older than one minute
+	n := 0
+	for _, ts := range c.messageTimestamps {
+		if ts.After(oneMinuteAgo) {
+			c.messageTimestamps[n] = ts
+			n++
+		}
+	}
+	c.messageTimestamps = c.messageTimestamps[:n]
+
+	// Add current message timestamp
+	c.messageTimestamps = append(c.messageTimestamps, now)
+	messageCount := len(c.messageTimestamps)
+	c.mu.Unlock()
+
+	if messageCount > 60 {
+		msg := fmt.Sprintf("Kicking %s for spamming (too many messages per minute).", c.nickname)
+		c.server.AppendSystemMessage(msg)
+		log.Printf("Kicking client %s (%s) for spamming.", c.nickname, c.ip)
+		c.Close()
 		return
 	}
 
@@ -660,8 +689,8 @@ func main() {
 			nickname = generateGuestNickname()
 		}
 
-		if len(nickname) > 10 {
-			nickname = nickname[:10]
+		if len(nickname) > 20 {
+			nickname = nickname[:20]
 		}
 
 		client := NewClient(globalChat, s, nickname, int(ptyReq.Window.Width), int(ptyReq.Window.Height), ip)
