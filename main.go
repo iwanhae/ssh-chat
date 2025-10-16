@@ -21,11 +21,12 @@ import (
 )
 
 type Message struct {
-	Time  time.Time
-	Nick  string
-	Text  string
-	Color int
-	IP    string
+	Time     time.Time
+	Nick     string
+	Text     string
+	Color    int
+	IP       string
+	Mentions []string // List of mentioned usernames
 }
 
 type ChatServer struct {
@@ -92,6 +93,9 @@ func (cs *ChatServer) RemoveClient(c *Client) {
 }
 
 func (cs *ChatServer) AppendMessage(msg Message) {
+	// Detect mentions in the message
+	msg.Mentions = extractMentions(msg.Text)
+
 	cs.mu.Lock()
 	cs.messages = append(cs.messages, msg)
 	clients := make([]*Client, 0, len(cs.clients))
@@ -102,8 +106,16 @@ func (cs *ChatServer) AppendMessage(msg Message) {
 
 	cs.logMessage(msg)
 
+	// Send notifications to all clients, with bell for mentioned users
 	for _, client := range clients {
-		client.Notify()
+		isMentioned := false
+		for _, mention := range msg.Mentions {
+			if strings.EqualFold(client.nickname, mention) {
+				isMentioned = true
+				break
+			}
+		}
+		client.NotifyWithBell(isMentioned)
 	}
 }
 
@@ -241,6 +253,15 @@ func (c *Client) Notify() {
 	case c.updateCh <- struct{}{}:
 	default:
 	}
+}
+
+// NotifyWithBell sends a notification with optional bell character
+func (c *Client) NotifyWithBell(withBell bool) {
+	if withBell {
+		// Send bell character before the update notification
+		c.session.Write([]byte("\a"))
+	}
+	c.Notify()
 }
 
 func (c *Client) SetWindowSize(width, height int) {
@@ -561,11 +582,15 @@ func formatMessage(msg Message, width int) []string {
 		color = 37 // default to white
 	}
 	coloredNick := fmt.Sprintf("\x1b[%dm%s\x1b[0m", color, msg.Nick)
+
+	// Highlight mentions in the message text
+	highlightedText := highlightMentions(msg.Text, msg.Mentions)
+
 	prefix := fmt.Sprintf("[%s] %s: ", msg.Time.Format("15:04:05"), coloredNick)
 	indent := strings.Repeat(" ", len(msg.Nick)+13)
 
 	var lines []string
-	segments := strings.Split(msg.Text, "\n")
+	segments := strings.Split(highlightedText, "\n")
 	for i, segment := range segments {
 		base := segment
 		if i == 0 {
@@ -797,6 +822,65 @@ func isBlockedRune(r rune) bool {
 		return true
 	}
 	return isCombiningBlock(r)
+}
+
+// extractMentions finds all @username mentions in a message
+func extractMentions(text string) []string {
+	var mentions []string
+	words := strings.Fields(text)
+
+	for _, word := range words {
+		if strings.HasPrefix(word, "@") {
+			// Remove @ and any trailing punctuation
+			mention := strings.TrimPrefix(word, "@")
+			mention = strings.TrimFunc(mention, func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+			})
+			if mention != "" {
+				mentions = append(mentions, mention)
+			}
+		}
+	}
+
+	return mentions
+}
+
+// highlightMentions adds highlighting to mentioned usernames in the message text
+func highlightMentions(text string, mentions []string) string {
+	if len(mentions) == 0 {
+		return text
+	}
+
+	result := text
+	for _, mention := range mentions {
+		// Create patterns for @username and @username with punctuation
+		pattern := "@" + mention
+		highlighted := fmt.Sprintf("\x1b[1;33m%s\x1b[0m", pattern) // Bold yellow
+		result = strings.ReplaceAll(result, pattern, highlighted)
+
+		// Also handle case where mention might have punctuation after it
+		patterns := []string{
+			"@" + mention + ",",
+			"@" + mention + ".",
+			"@" + mention + "!",
+			"@" + mention + "?",
+			"@" + mention + ":",
+			"@" + mention + ";",
+		}
+
+		for _, p := range patterns {
+			if strings.Contains(result, p) {
+				// Find the index and replace with highlighted version plus punctuation
+				parts := strings.SplitN(p, "@"+mention, 2)
+				if len(parts) == 2 {
+					highlightedWithPunct := fmt.Sprintf("\x1b[1;33m@%s\x1b[0m%s", mention, parts[1])
+					result = strings.ReplaceAll(result, p, highlightedWithPunct)
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 func ValidateNoCombining(input string) error {
