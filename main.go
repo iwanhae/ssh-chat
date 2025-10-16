@@ -548,7 +548,7 @@ func (c *Client) handleEnter() {
 	if strings.Contains(text, "스프링") {
 		c.server.AppendSystemMessage("물러가라 이 사악한 스프링놈아.")
 	}
-	if strings.Contains(text, "자바") {
+	if strings.Contains(text, "자바") && !strings.Contains(text, "자바스") {
 		c.server.AppendSystemMessage("망해라 자바")
 	}
 	if strings.Contains(text, "자스") || strings.Contains(text, "자바스") || strings.Contains(text, "javascript") {
